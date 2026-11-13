@@ -32,12 +32,13 @@ export default function VideoRecorder({ onSend, onClose }: Props) {
   const [elapsed, setElapsed] = useState(0);
   const [previewBlob, setPreviewBlob] = useState<Blob | null>(null);
   const [sending, setSending] = useState(false);
+  const [facingMode, setFacingMode] = useState<"user" | "environment">("user");
 
   useEffect(() => {
     let cancelled = false;
     navigator.mediaDevices
       .getUserMedia({
-        video: { facingMode: "user" },
+        video: { facingMode },
         audio: true,
       })
       .then((stream) => {
@@ -45,6 +46,7 @@ export default function VideoRecorder({ onSend, onClose }: Props) {
           stream.getTracks().forEach((t) => t.stop());
           return;
         }
+        streamRef.current?.getTracks().forEach((t) => t.stop());
         streamRef.current = stream;
         if (videoRef.current) videoRef.current.srcObject = stream;
       })
@@ -55,7 +57,11 @@ export default function VideoRecorder({ onSend, onClose }: Props) {
       streamRef.current?.getTracks().forEach((t) => t.stop());
       if (timerRef.current) window.clearInterval(timerRef.current);
     };
-  }, []);
+  }, [facingMode]);
+
+  function flipCamera() {
+    setFacingMode((prev) => (prev === "user" ? "environment" : "user"));
+  }
 
   function startRecording() {
     const stream = streamRef.current;
@@ -124,7 +130,18 @@ export default function VideoRecorder({ onSend, onClose }: Props) {
 
         {!previewBlob && (
           <>
-            <video ref={videoRef} autoPlay playsInline muted className="recorder-video" />
+            <div className="recorder-video-wrap">
+              <video ref={videoRef} autoPlay playsInline muted className="recorder-video" />
+              <button
+                className="flip-btn"
+                onClick={flipCamera}
+                disabled={isRecording}
+                aria-label="Switch camera"
+                title="Switch camera"
+              >
+                🔄
+              </button>
+            </div>
             <div className="recorder-bar">
               <span className="timer">
                 {elapsed}s / {MAX_SECONDS}s
