@@ -12,10 +12,15 @@ const firebaseConfig = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID,
 };
 
-export const app = initializeApp(firebaseConfig);
-export const auth = getAuth(app);
-export const db = getFirestore(app);
-export const storage = getStorage(app);
+export const firebaseConfigured = Boolean(firebaseConfig.apiKey);
+
+// When the real Firebase config hasn't been wired up yet (no env vars set),
+// skip initializing the SDK rather than letting it throw at import time and
+// blank the whole page — App.tsx shows a setup message instead.
+export const app = firebaseConfigured ? initializeApp(firebaseConfig) : null;
+export const auth = app ? getAuth(app) : (null as unknown as ReturnType<typeof getAuth>);
+export const db = app ? getFirestore(app) : (null as unknown as ReturnType<typeof getFirestore>);
+export const storage = app ? getStorage(app) : (null as unknown as ReturnType<typeof getStorage>);
 
 // Usernames aren't real emails, so we map them to a fake address under a
 // fixed fake domain and use Firebase's normal email/password auth under the
