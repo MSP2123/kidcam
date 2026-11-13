@@ -3,96 +3,102 @@
 A small web app, installable on both iPadOS (Safari) and Android (Chrome),
 where kids can add each other as friends by username and send 30-second
 videos back and forth. Each friend shows up as a small chat thread of video
-bubbles.
+bubbles. The whole stack runs on Cloudflare's free tier.
+
+**Live app:** https://kidcam.marksmurfik-d59.workers.dev
+**API:** https://kidcam-api.marksmurfik-d59.workers.dev
 
 ## How it works
 
-- **Login**: username + 4-6 digit PIN (no email needed). Under the hood this
-  maps to a normal Firebase email/password account (`username@kidcam.local`),
-  so no custom server is needed.
+- **Login**: username + 4-6 digit PIN (no email needed). The PIN is hashed
+  (PBKDF2) and never stored in plain text.
 - **Friends**: add someone by username, they get a request, accept/decline.
 - **Chat**: tap a friend, hit "Record a video", record up to 30 seconds from
-  the front camera, preview it, then send. Videos upload to Firebase Storage
-  and show up as playable bubbles in the thread for both people.
+  the front camera, preview it, then send. The friends list and chat refresh
+  every few seconds (simple polling — no realtime infra needed for this).
 - **Installable**: it's a PWA — "Add to Home Screen" on iPad, or Chrome's
   install prompt on Android — so it opens full-screen like a native app.
 
-## One-time Firebase setup
+## Architecture
 
-1. Go to the [Firebase console](https://console.firebase.google.com/) and
-   create a new project (billing not required — everything here fits in the
-   free Spark plan).
-2. **Authentication** → Sign-in method → enable **Email/Password**.
-3. **Firestore Database** → create a database (production mode is fine,
-   since the rules below lock it down).
-4. **Storage** → create a default bucket.
-5. **Project settings** → add a Web app → copy the config values into
-   `.env.local` (copy `.env.example` to `.env.local` first):
+- **Frontend** (`/`): React + Vite, deployed as a Cloudflare Worker with
+  static assets (the modern replacement for "Cloudflare Pages").
+- **Backend** (`/worker`): a Cloudflare Worker (Hono) exposing a small REST
+  API — signup/login, friend requests, and chat messages.
+- **Database**: Cloudflare D1 (SQLite) — users, sessions, friends, friend
+  requests, message metadata.
+- **Video storage**: Cloudflare Workers KV — each video is one KV value
+  (capped at 20MB, well under KV's 25MB limit; a 30-second clip is normally
+  a few MB). Videos are fetched as authenticated blobs, not public URLs.
 
+Both the frontend and the API are on Cloudflare's **free plan** — no credit
+card needed anywhere in this stack, and nothing here can incur a surprise
+charge (free-tier limits just stop working rather than billing you).
+
+## One-time setup (if you want to redeploy this yourself)
+
+1. Install Wrangler and log in:
    ```bash
-   cp .env.example .env.local
+   npm install -g wrangler
+   wrangler login
+   ```
+2. Create your own D1 database and KV namespace, then update the ids in
+   `worker/wrangler.toml`:
+   ```bash
+   cd worker
+   npm install
+   wrangler d1 create kidcam-db
+   wrangler kv namespace create kidcam_videos
+   # paste the printed database_id / id into wrangler.toml
+   wrangler d1 execute kidcam-db --remote --file=./schema.sql
+   ```
+3. Deploy the API:
+   ```bash
+   wrangler deploy
+   ```
+   Note the `https://kidcam-api.<your-subdomain>.workers.dev` URL it prints.
+4. Back in the project root, point the frontend at your API and deploy it:
+   ```bash
+   cd ..
+   npm install
+   echo "VITE_API_BASE=https://kidcam-api.<your-subdomain>.workers.dev" > .env.local
+   npm run build
+   wrangler deploy
+   ```
+5. Update `worker/wrangler.toml`'s `ALLOWED_ORIGIN` to your frontend's
+   deployed URL (tightens CORS) and redeploy the API:
+   ```bash
+   cd worker && wrangler deploy
    ```
 
-   Fill in `VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_AUTH_DOMAIN`,
-   `VITE_FIREBASE_PROJECT_ID`, `VITE_FIREBASE_STORAGE_BUCKET`,
-   `VITE_FIREBASE_MESSAGING_SENDER_ID`, `VITE_FIREBASE_APP_ID`.
-
-6. Deploy the security rules in this repo so only the two people in a chat
-   can see it:
-
-   ```bash
-   npm install -g firebase-tools
-   firebase login
-   firebase init firestore storage   # point at the existing rules files, don't overwrite them
-   firebase deploy --only firestore:rules,storage:rules
-   ```
-
-   (Or just paste the contents of `firestore.rules` and `storage.rules` into
-   the console's Rules tabs for Firestore and Storage.)
-
-## Running it
+## Running it locally
 
 ```bash
 npm install
 npm run dev
 ```
 
-Open the printed URL on your computer to test, or on your phone/iPad's
-browser (same Wi-Fi network, using your computer's local IP) to try the
-camera for real — camera access needs HTTPS or `localhost`, so for testing
-across devices you'll want to deploy it (step below) rather than using the
-raw dev server's IP address.
+The dev server talks to whatever `VITE_API_BASE` points at in `.env.local`
+(normally the deployed Worker — there's no need to run the API locally too,
+though `wrangler dev` in `worker/` works if you want to).
 
-## Deploying so it's installable on real devices
+Camera access needs HTTPS or `localhost`, so for testing the camera on an
+iPad or Android phone, use the deployed URL rather than your dev server's
+local network IP.
 
-This repo deploys itself to **GitHub Pages** via `.github/workflows/deploy.yml`
-every time `main` is pushed. One-time setup:
+## Installing on a device
 
-1. In the repo on GitHub: **Settings → Pages → Source → GitHub Actions**.
-2. **Settings → Secrets and variables → Actions** → add these six repository
-   secrets with your real Firebase config values (from step 5 above):
-   `VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_AUTH_DOMAIN`,
-   `VITE_FIREBASE_PROJECT_ID`, `VITE_FIREBASE_STORAGE_BUCKET`,
-   `VITE_FIREBASE_MESSAGING_SENDER_ID`, `VITE_FIREBASE_APP_ID`.
-3. Push to `main` — the Actions tab will show the build + deploy run, and
-   the site will be live at `https://<your-username>.github.io/kidcam/`.
-
-(These Firebase values aren't secret in the usual sense — they're visible in
-any Firebase web app's bundle — but keeping them in repo secrets means you
-don't have to commit `.env.local`, and makes it trivial to swap projects.)
-
-Then on the iPad, open that URL in Safari → Share → **Add to Home
+On the iPad, open the deployed URL in Safari → Share → **Add to Home
 Screen**. On Android, open it in Chrome and tap **Install app** when
 prompted (or Menu → Add to Home screen).
-
-Alternatively, Firebase Hosting works too: `npm run build && firebase deploy
---only hosting` (skip setting `GITHUB_PAGES=true` in that case, since the
-app would then be served from the domain root, not a `/kidcam/` subpath).
 
 ## Notes / limits
 
 - Videos are recorded as WebM (VP8/VP9) via `MediaRecorder`, which both
   Safari (iPadOS 17+) and Chrome support.
 - There's a hard 30-second cap enforced client-side during recording, and a
-  60MB upload size cap enforced by the Storage rules as a backstop.
+  20MB upload size cap enforced by the Worker as a backstop (KV's hard limit
+  is 25MB per value).
 - Usernames are first-come-first-served and globally unique.
+- Friends/chat use polling (every ~4s) instead of websockets — simple and
+  reliable for this scale, at the cost of a few seconds of lag.

@@ -2,13 +2,15 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import {
+  fetchFriends,
+  fetchIncomingRequests,
+  fetchSentRequests,
   respondToRequest,
   sendFriendRequest,
-  watchFriends,
-  watchIncomingRequests,
-  watchSentRequests,
 } from "../friends";
 import type { Friend, FriendRequest } from "../types";
+
+const POLL_MS = 4000;
 
 export default function Friends() {
   const { profile, logOut } = useAuth();
@@ -19,16 +21,23 @@ export default function Friends() {
   const [addUsername, setAddUsername] = useState("");
   const [status, setStatus] = useState<string | null>(null);
 
+  async function refresh() {
+    const [f, inc, out] = await Promise.all([
+      fetchFriends(),
+      fetchIncomingRequests(),
+      fetchSentRequests(),
+    ]);
+    setFriends(f);
+    setIncoming(inc);
+    setSent(out);
+  }
+
   useEffect(() => {
     if (!profile) return;
-    const unsubFriends = watchFriends(profile.uid, setFriends);
-    const unsubIncoming = watchIncomingRequests(profile.uid, setIncoming);
-    const unsubSent = watchSentRequests(profile.uid, setSent);
-    return () => {
-      unsubFriends();
-      unsubIncoming();
-      unsubSent();
-    };
+    refresh();
+    const interval = setInterval(refresh, POLL_MS);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile]);
 
   if (!profile) return null;
@@ -37,12 +46,18 @@ export default function Friends() {
     e.preventDefault();
     setStatus(null);
     try {
-      await sendFriendRequest(profile!, addUsername);
+      await sendFriendRequest(addUsername);
       setStatus(`Friend request sent to ${addUsername}.`);
       setAddUsername("");
+      refresh();
     } catch (err) {
       setStatus(err instanceof Error ? err.message : "Couldn't send request.");
     }
+  }
+
+  async function handleRespond(req: FriendRequest, accept: boolean) {
+    await respondToRequest(req.id, accept);
+    refresh();
   }
 
   return (
@@ -73,8 +88,8 @@ export default function Friends() {
           {incoming.map((req) => (
             <div key={req.id} className="request-row">
               <span>{req.fromUsername}</span>
-              <button onClick={() => respondToRequest(req, true)}>Accept</button>
-              <button onClick={() => respondToRequest(req, false)}>Decline</button>
+              <button onClick={() => handleRespond(req, true)}>Accept</button>
+              <button onClick={() => handleRespond(req, false)}>Decline</button>
             </div>
           ))}
         </section>

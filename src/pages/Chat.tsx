@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import { sendVideoMessage, watchMessages } from "../chat";
+import { fetchMessages, sendVideoMessage } from "../chat";
 import type { ChatMessage } from "../types";
 import VideoRecorder from "../components/VideoRecorder";
+
+const POLL_MS = 4000;
 
 export default function Chat() {
   const { profile } = useAuth();
@@ -15,7 +17,20 @@ export default function Chat() {
 
   useEffect(() => {
     if (!profile || !friendUid) return;
-    return watchMessages(profile.uid, friendUid, setMessages);
+
+    let cancelled = false;
+    async function refresh() {
+      const msgs = await fetchMessages(friendUid!);
+      if (cancelled) return;
+      setMessages(msgs);
+    }
+
+    refresh();
+    const interval = setInterval(refresh, POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, [profile, friendUid]);
 
   useEffect(() => {
@@ -26,6 +41,8 @@ export default function Chat() {
 
   async function handleSend(blob: Blob, durationSeconds: number) {
     await sendVideoMessage(profile!, friendUid!, friendUsername!, blob, durationSeconds);
+    const msgs = await fetchMessages(friendUid!);
+    setMessages(msgs);
   }
 
   return (
